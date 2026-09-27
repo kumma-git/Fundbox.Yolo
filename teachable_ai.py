@@ -1,36 +1,22 @@
-"""Teachable-Machine Bilderkennung für die Fundbox (TestKI4) — ohne TensorFlow.
-
-Die Gewichte aus ``keras_model.h5`` werden mit purem numpy gerechnet
-(``keras_numpy.py``, MobileNetV2-Forward-Pass). Läuft überall, wo es
-numpy + h5py gibt — auch auf Python 3.14 ohne TF-Wheels.
-Klassen: ``labels.txt``.
-"""
-
 from __future__ import annotations
 
-import urllib.request
-from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-import numpy as np
 from PIL import Image
 
-# --------------------------------------------------------------------------
-# Quellen (TestKI4-Original) — das Modell selbst lädt keras_numpy.
-# --------------------------------------------------------------------------
-TESTKI4_LABELS_URL = (
-    "https://raw.githubusercontent.com/kumma-git/TestKI4/main/labels.txt"
-)
-# TestKI4 nennt die Datei labels.txt (Format "0 Klassenname").
-LABEL_FILES = [Path("teachable_labels.txt"), Path("labels.txt")]
+# YOLO wird erst importiert, wenn die Datei geladen wird.
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
 
-IMAGE_SIZE = 224
 
-# --------------------------------------------------------------------------
-# Mapping: Teachable-Klasse -> Fundbox-Kategorie (1:1, gleiche Namen).
-# Die 11 Klassen aus labels.txt SIND die Kategorien der Fundbox.
-# --------------------------------------------------------------------------
-TEACHABLE_TO_CATEGORY = {name: name for name in [
+# ---------------------------------------------------------
+# Deine Kategorien aus app.py
+# ---------------------------------------------------------
+
+CLASSES = [
     "Kleidungsstücke",
     "Schulsachen",
     "Trinkflasche",
@@ -42,156 +28,241 @@ TEACHABLE_TO_CATEGORY = {name: name for name in [
     "Brille",
     "Geldtasche",
     "Taschenrechner",
-]}
-
-# Fallback, falls labels.txt fehlt: Reihenfolge aus TestKI4.
-BUILTIN_LABELS = list(TEACHABLE_TO_CATEGORY)
+]
 
 
-# --------------------------------------------------------------------------
-# Labels
-# --------------------------------------------------------------------------
-def parse_teachable_labels(lines: list[str]) -> list[str]:
-    """Parst TestKI4-Labels im Format ``"<index> <Name>"``.
+# ---------------------------------------------------------
+# YOLO-Modell
+# ---------------------------------------------------------
 
-    Robust gegen Varianten ohne Index, Leerzeilen und Mehrwort-Namen.
-    """
-    names: list[str] = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split(None, 1)
-        if len(parts) == 2 and parts[0].rstrip(".:").isdigit():
-            names.append(parts[1].strip())
-        else:
-            names.append(line)
-    return names
+MODEL_PATH = Path("yolo11n.pt")
+
+_model = None
 
 
-def ensure_file(path: Path, url: str) -> Path | None:
-    """Lädt eine Datei bei Bedarf herunter (einmalig)."""
-    if path.exists() and path.stat().st_size > 1000:
-        return path
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(url, path)
-    except Exception:
-        return None
-    if path.exists() and path.stat().st_size > 1000:
-        return path
-    return None
+def get_model():
+    global _model
 
-
-def load_teachable_labels() -> list[str]:
-    for candidate in LABEL_FILES:
-        if candidate.exists() and candidate.stat().st_size > 0:
-            try:
-                parsed = parse_teachable_labels(
-                    candidate.read_text(encoding="utf-8").splitlines()
-                )
-                if parsed:
-                    return parsed
-            except Exception:
-                continue
-    path = ensure_file(LABEL_FILES[0], TESTKI4_LABELS_URL)
-    if path is not None:
-        try:
-            return parse_teachable_labels(
-                path.read_text(encoding="utf-8").splitlines()
-            ) or list(BUILTIN_LABELS)
-        except Exception:
-            pass
-    return list(BUILTIN_LABELS)
-
-
-# --------------------------------------------------------------------------
-# Modell (numpy-Engine auf keras_model.h5, gecached) — kein TensorFlow nötig
-# --------------------------------------------------------------------------
-@lru_cache(maxsize=1)
-def load_teachable_graph():
-    """Netzwerk-Graph + Gewichte oder None (Datei fehlt / h5py fehlt)."""
-    try:
-        import keras_numpy  # noqa: F401
-    except Exception:
-        return None
-    import keras_numpy
-
-    try:
-        return keras_numpy.load_graph()
-    except Exception:
+    if YOLO is None:
         return None
 
+    if _model is None:
+        # Lädt yolo11n.pt beim ersten Start automatisch herunter,
+        # falls die Datei noch nicht vorhanden ist.
+        _model = YOLO(str(MODEL_PATH))
 
-def preprocess(pil_image: Image.Image) -> np.ndarray:
-    """224x224 RGB, Teachable-Normalisierung (/127.5 - 1), Batch-Dim.
-
-    Exakt wie im Original (TestKI4-app.py): plain resize ohne Filter
-    (= PIL-Default BICUBIC).
-    """
-    img = pil_image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE))
-    arr = np.asarray(img, dtype=np.float32)
-    data = np.ndarray(shape=(1, IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-    data[0] = (arr / 127.5) - 1.0
-    return data
+    return _model
 
 
-def predict_teachable(pil_image: Image.Image) -> dict | None:
-    """Gibt ``{label, confidence, category, top3, engine}`` oder None zurück."""
-    import keras_numpy
+# ---------------------------------------------------------
+# YOLO-Klassen -> Fundbox-Kategorien
+# ---------------------------------------------------------
 
-    graph = load_teachable_graph()
-    if graph is None:
-        return None
-    try:
-        labels = load_teachable_labels()
-        probs = keras_numpy.forward_batch(graph, preprocess(pil_image))[0]
-        probs = np.asarray(probs, dtype=np.float64).ravel()
-        n = min(len(probs), len(labels))
-        probs, labels = probs[:n], labels[:n]
-        order = np.argsort(probs)[::-1]
-        top3 = [(labels[int(i)], float(probs[int(i)])) for i in order[:3]]
-        best_label, best_prob = top3[0]
-        return {
-            "label": best_label,
-            "confidence": best_prob,
-            "category": TEACHABLE_TO_CATEGORY.get(best_label, "Sonstiges"),
-            "top3": top3,
-            "engine": "Teachable Machine (keras_model.h5 · numpy)",
-        }
-    except Exception:
-        return None
+CATEGORY_MAP = {
+    # Trinkflasche
+    "bottle": "Trinkflasche",
+
+    # Regenschirm
+    "umbrella": "Regenschirm",
+
+    # Schulsachen
+    "book": "Schulsachen",
+    "backpack": "Schulsachen",
+    "laptop": "Schulsachen",
+    "keyboard": "Schulsachen",
+    "mouse": "Schulsachen",
+
+    # Kleidungsstücke
+    "tie": "Kleidungsstücke",
+    "suitcase": "Kleidungsstücke",
+
+    # Geldtasche
+    "handbag": "Geldtasche",
+
+    # Dinge, die YOLO als Handy erkennt
+    # können in der Fundbox nicht sinnvoll einer
+    # eigenen Kategorie zugeordnet werden.
+}
 
 
-# --------------------------------------------------------------------------
-# Heuristik-Fallback (kein Modell verfügbar) — ehrlich als unsicher markiert
-# --------------------------------------------------------------------------
-def heuristic_guess(pil_image: Image.Image) -> dict:
-    rgb = pil_image.convert("RGB")
-    w, h = rgb.size
-    small = np.asarray(rgb.resize((64, 64)), dtype=np.float32)
-    std = float(small.std(axis=(0, 1)).mean())
-    r, g, b = (float(v) for v in small.mean(axis=(0, 1)))
-    if std < 18 and r < 80 and g < 80 and b < 80:
-        return {
-            "label": "Dunkles Objekt",
-            "confidence": 0.35,
-            "category": "Kopfhörer",
-            "top3": [],
-            "engine": "Bildmerkmale (Fallback, unsicher)",
-        }
-    if w / float(h) < 0.62 or w / float(h) > 1.7:
-        return {
-            "label": "Längliches Objekt",
-            "confidence": 0.35,
-            "category": "Trinkflasche",
-            "top3": [],
-            "engine": "Bildmerkmale (Fallback, unsicher)",
-        }
+# Anzeigenamen für deine Fundbox
+DISPLAY_NAMES = {
+    "Kleidungsstücke": "Kleidungsstück",
+    "Schulsachen": "Schulsache",
+    "Trinkflasche": "Trinkflasche",
+    "Brotdose": "Brotdose",
+    "Regenschirm": "Regenschirm",
+    "Schlüssel": "Schlüssel",
+    "Kopfhörer": "Kopfhörer",
+    "Powerbank/Ladekabel": "Powerbank/Ladekabel",
+    "Brille": "Brille",
+    "Geldtasche": "Geldtasche",
+    "Taschenrechner": "Taschenrechner",
+}
+
+
+# ---------------------------------------------------------
+# Hilfsfunktion
+# ---------------------------------------------------------
+
+def _empty_result() -> dict[str, Any]:
     return {
-        "label": "Unbekannt",
-        "confidence": 0.25,
-        "category": "Kleidungsstücke",
+        "label": "unbekannt",
+        "category": "Schulsachen",
+        "confidence": 0.0,
         "top3": [],
-        "engine": "Kein Modell verfügbar",
+        "engine": "YOLO11n",
     }
+
+
+# ---------------------------------------------------------
+# Hauptfunktion für deine app.py
+# ---------------------------------------------------------
+
+def predict_teachable(image: Image.Image) -> dict[str, Any] | None:
+    """
+    Kompatibel mit deinem bestehenden app.py.
+
+    Eingabe:
+        PIL.Image
+
+    Ausgabe:
+        {
+            "label": ...,
+            "category": ...,
+            "confidence": ...,
+            "top3": [...],
+            "engine": ...
+        }
+    """
+
+    model = get_model()
+
+    if model is None:
+        return None
+
+    try:
+        image = image.convert("RGB")
+
+        results = model.predict(
+            source=image,
+            conf=0.15,
+            imgsz=640,
+            verbose=False,
+            max_det=10,
+        )
+
+        if not results:
+            return None
+
+        result = results[0]
+
+        if result.boxes is None or len(result.boxes) == 0:
+            return None
+
+        names = result.names
+
+        detections = []
+
+        for i in range(len(result.boxes)):
+            cls_id = int(result.boxes.cls[i].item())
+            confidence = float(result.boxes.conf[i].item())
+
+            raw_label = names.get(cls_id, str(cls_id)).lower()
+
+            category = CATEGORY_MAP.get(raw_label)
+
+            if category is None:
+                continue
+
+            detections.append(
+                {
+                    "raw": raw_label,
+                    "category": category,
+                    "confidence": confidence,
+                }
+            )
+
+        if not detections:
+            return None
+
+        # Höchste Sicherheit zuerst
+        detections.sort(
+            key=lambda x: x["confidence"],
+            reverse=True
+        )
+
+        best = detections[0]
+
+        # Mehrere YOLO-Erkennungen derselben Kategorie
+        # werden zusammengeführt.
+        category_scores = {}
+
+        for detection in detections:
+            category = detection["category"]
+            score = detection["confidence"]
+
+            if category not in category_scores:
+                category_scores[category] = score
+            else:
+                category_scores[category] = max(
+                    category_scores[category],
+                    score
+                )
+
+        sorted_categories = sorted(
+            category_scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        top3 = [
+            (category, score)
+            for category, score in sorted_categories[:3]
+        ]
+
+        best_category = sorted_categories[0][0]
+        best_confidence = sorted_categories[0][1]
+
+        label = DISPLAY_NAMES.get(
+            best_category,
+            best_category
+        )
+
+        return {
+            "label": label,
+            "category": best_category,
+            "confidence": best_confidence,
+            "top3": top3,
+            "engine": "YOLO11n · COCO",
+        }
+
+    except Exception as e:
+        print(f"YOLO-Fehler: {e}")
+        return None
+
+
+# ---------------------------------------------------------
+# Deine alte Funktion bleibt kompatibel
+# ---------------------------------------------------------
+
+def heuristic_guess(image: Image.Image) -> dict[str, Any]:
+    """
+    Fallback, falls YOLO nichts erkennt.
+    """
+
+    return {
+        "label": "unbekannt",
+        "category": "Schulsachen",
+        "confidence": 0.0,
+        "top3": [],
+        "engine": "Fallback",
+    }
+
+
+# ---------------------------------------------------------
+# Kompatibilität mit deinem bisherigen Code
+# ---------------------------------------------------------
+
+def load_teachable_labels():
+    return CLASSES
