@@ -1,0 +1,1 @@
+_model = YOLO("yolo11n.pt")
