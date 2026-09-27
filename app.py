@@ -182,7 +182,7 @@ with h1:
     ui.badges([
         ("Katharineum zu Lübeck", "default"),
         (f"{len(CLASSES)} erkennbare Kategorien", "secondary"),
-        ("KI: keras_model.h5", "outline"),
+        ("KI: YOLO11n", "outline"),
     ], key="head_badges")
 with h2:
     st.markdown('<div class="school-seal">🎒</div>', unsafe_allow_html=True)
