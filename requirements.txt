@@ -1,0 +1,6 @@
+streamlit
+pillow
+numpy
+pandas
+h5py
+streamlit-shadcn-ui
