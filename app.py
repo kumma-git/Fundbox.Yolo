@@ -895,38 +895,3 @@ st.caption(
     "YOLO11n object detection 🔎"
 )
 ```
-
-### Wichtig: `yolo11n.pt`
-
-In dein GitHub-Repository muss jetzt diese Datei:
-
-```text
-yolo11n.pt
-```
-
-liegen.
-
-Deine Projektstruktur sollte ungefähr so aussehen:
-
-```text
-dein-repository/
-│
-├── app.py
-├── yolo11n.pt
-├── requirements.txt
-│
-└── data/
-    ├── items.json
-    └── images/
-```
-
-### `requirements.txt`
-
-Da wir jetzt tatsächlich YOLO verwenden, braucht Streamlit die YOLO-Bibliothek:
-
-```text
-streamlit
-ultralytics
-pillow
-```
-
