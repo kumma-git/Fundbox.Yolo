@@ -1,4 +1,3 @@
-```python
 import datetime
 import io
 import json
@@ -11,7 +10,7 @@ from ultralytics import YOLO
 
 
 # ============================================================
-# SETUP
+# APP SETUP
 # ============================================================
 
 st.set_page_config(
@@ -28,36 +27,33 @@ st.set_page_config(
 DATA_DIR = Path("data")
 IMAGE_DIR = DATA_DIR / "images"
 ITEMS_FILE = DATA_DIR / "items.json"
+MODEL_FILE = Path("yolo11n.pt")
 
 DATA_DIR.mkdir(exist_ok=True)
 IMAGE_DIR.mkdir(exist_ok=True)
 
 
 # ============================================================
-# YOLO
+# YOLO11n LADEN
 # ============================================================
-
-MODEL_FILE = Path("yolo11n.pt")
-
 
 @st.cache_resource
 def load_model():
-    """
-    Lädt das lokale YOLO11n-Modell.
-    Die Datei yolo11n.pt muss im GitHub-Repository liegen.
-    """
     return YOLO(str(MODEL_FILE))
 
 
-model = load_model()
+try:
+    model = load_model()
+    model_error = None
+except Exception as e:
+    model = None
+    model_error = str(e)
 
 
 # ============================================================
-# RELEVANTE YOLO-KATEGORIEN
+# KATEGORIEN
 # ============================================================
 
-# Diese Kategorien existieren im normalen COCO-Modell
-# von YOLO und sind für ein Fundbüro sinnvoll.
 YOLO_CATEGORIES = {
     "backpack": "Backpack",
     "handbag": "Handbag",
@@ -88,11 +84,10 @@ CLASS_EMOJI = {
     "Keyboard": "⌨️",
     "Mouse": "🖱️",
     "Remote": "🎮",
-    "Clock": "⌚",
+    "Clock": "🕐",
     "Umbrella": "☂️",
     "Sports Ball": "⚽",
     "Tie": "👔",
-    "Unknown": "❓",
 }
 
 CLASSES = list(YOLO_CATEGORIES.values())
@@ -106,7 +101,9 @@ def load_items():
     if ITEMS_FILE.exists():
         try:
             return json.loads(
-                ITEMS_FILE.read_text(encoding="utf-8")
+                ITEMS_FILE.read_text(
+                    encoding="utf-8"
+                )
             )
         except Exception:
             return []
@@ -135,12 +132,25 @@ items = st.session_state["items"]
 # SESSION STATE
 # ============================================================
 
-st.session_state.setdefault("tab", "Browse")
-st.session_state.setdefault("rep_bytes", None)
-st.session_state.setdefault("rep_ai", None)
-st.session_state.setdefault("rep_name_ai", "")
-st.session_state.setdefault("uploader_nonce", 0)
-st.session_state.setdefault("search", "")
+st.session_state.setdefault(
+    "rep_bytes",
+    None
+)
+
+st.session_state.setdefault(
+    "rep_ai",
+    None
+)
+
+st.session_state.setdefault(
+    "rep_name_ai",
+    ""
+)
+
+st.session_state.setdefault(
+    "uploader_nonce",
+    0
+)
 
 
 # ============================================================
@@ -148,27 +158,32 @@ st.session_state.setdefault("search", "")
 # ============================================================
 
 def emoji_for(category):
-    return CLASS_EMOJI.get(category, "❓")
+    return CLASS_EMOJI.get(
+        category,
+        "❓"
+    )
 
 
-def photo(item):
-    filename = item.get("filename", "")
+def show_photo(item):
+    filename = item.get(
+        "filename",
+        ""
+    )
 
     path = IMAGE_DIR / filename
 
     if filename and path.is_file():
+
         st.image(
             str(path),
             use_container_width=True
         )
+
     else:
+
         st.markdown(
             f"""
-            <div style="
-                font-size:3rem;
-                text-align:center;
-                padding:1rem;
-            ">
+            <div class="emoji-placeholder">
                 {emoji_for(item.get("category", ""))}
             </div>
             """,
@@ -177,6 +192,7 @@ def photo(item):
 
 
 def search_items(items, query):
+
     query = query.lower().strip()
 
     if not query:
@@ -187,27 +203,39 @@ def search_items(items, query):
     results = []
 
     for item in items:
+
         text = " ".join([
             item.get("name", ""),
             item.get("category", ""),
             item.get("description", ""),
-            " ".join(item.get("search_terms", []))
+            " ".join(
+                item.get(
+                    "search_terms",
+                    []
+                )
+            )
         ]).lower()
 
         score = sum(
-            1 for word in words
+            1
+            for word in words
             if word in text
         )
 
         if score:
-            results.append((score, item))
+            results.append(
+                (score, item)
+            )
 
     results.sort(
         key=lambda x: x[0],
         reverse=True
     )
 
-    return [item for _, item in results]
+    return [
+        item
+        for _, item in results
+    ]
 
 
 # ============================================================
@@ -215,11 +243,9 @@ def search_items(items, query):
 # ============================================================
 
 def detect_object(image):
-    """
-    Erkennt Gegenstände mit YOLO11n.
-    Gibt das wahrscheinlichste relevante Objekt
-    und die Top-Ergebnisse zurück.
-    """
+
+    if model is None:
+        return None
 
     results = model.predict(
         source=image,
@@ -239,18 +265,27 @@ def detect_object(image):
     detections = []
 
     for box in result.boxes:
-        confidence = float(box.conf[0])
 
-        class_id = int(box.cls[0])
+        confidence = float(
+            box.conf[0]
+        )
 
-        raw_name = result.names[class_id]
+        class_id = int(
+            box.cls[0]
+        )
+
+        raw_name = result.names[
+            class_id
+        ]
 
         raw_name = raw_name.lower()
 
         if raw_name not in YOLO_CATEGORIES:
             continue
 
-        category = YOLO_CATEGORIES[raw_name]
+        category = YOLO_CATEGORIES[
+            raw_name
+        ]
 
         detections.append({
             "label": category,
@@ -260,28 +295,27 @@ def detect_object(image):
     if not detections:
         return None
 
-    # Höchste Wahrscheinlichkeit zuerst
     detections.sort(
         key=lambda x: x["confidence"],
         reverse=True
     )
 
-    best = detections[0]
-
-    # Gleiche Kategorie nur einmal anzeigen
     unique = []
-
     seen = set()
 
     for detection in detections:
+
         label = detection["label"]
 
         if label not in seen:
-            seen.add(label)
-            uniqueamlit-Widgets für Upload/Suche.
-""".append(detection)
 
-    top3 = unique[:3]
+            seen.add(label)
+
+            unique.append(
+                detection
+            )
+
+    best = unique[0]
 
     return {
         "label": best["label"],
@@ -289,10 +323,10 @@ def detect_object(image):
         "confidence": best["confidence"],
         "top3": [
             (
-                detection["label"],
-                detection["confidence"]
+                d["label"],
+                d["confidence"]
             )
-            for detection in top3
+            for d in unique[:3]
         ],
         "engine": "YOLO11n"
     }
@@ -307,18 +341,19 @@ st.markdown(
     <style>
 
     .stApp {
-        background: #FAFAF9;
+        background-color: #FAFAF9;
     }
 
     .block-container {
         max-width: 950px !important;
-        margin: auto;
+        margin-left: auto !important;
+        margin-right: auto !important;
     }
 
     .fund-title {
+        font-size: 3rem;
         font-weight: 800;
         letter-spacing: -0.03em;
-        font-size: 3rem;
         color: #1C1917;
         margin-bottom: 0;
     }
@@ -330,7 +365,7 @@ st.markdown(
     }
 
     .hero {
-        background: white;
+        background-color: white;
         border: 1px solid #E7E5E4;
         border-left: 6px solid #B91C1C;
         border-radius: 18px;
@@ -341,7 +376,7 @@ st.markdown(
     }
 
     .category-card {
-        background: white;
+        background-color: white;
         border: 1px solid #E7E5E4;
         border-radius: 15px;
         padding: 1rem;
@@ -349,11 +384,19 @@ st.markdown(
     }
 
     .result-box {
-        background: white;
+        background-color: white;
         border: 1px solid #E7E5E4;
         border-radius: 15px;
         padding: 1.2rem;
         margin-top: 1rem;
+    }
+
+    .emoji-placeholder {
+        font-size: 3rem;
+        text-align: center;
+        padding: 2rem;
+        background-color: #F5F5F4;
+        border-radius: 15px;
     }
 
     </style>
@@ -372,10 +415,12 @@ st.markdown(
 )
 
 st.markdown(
-    '<div class="fund-sub">'
-    'Das Fundbüro des Katharineums zu Lübeck — '
-    'Foto hochladen und Gegenstand erkennen lassen.'
-    '</div>',
+    """
+    <div class="fund-sub">
+        Das Fundbüro des Katharineums zu Lübeck –
+        Foto hochladen und Gegenstand erkennen lassen.
+    </div>
+    """,
     unsafe_allow_html=True
 )
 
@@ -384,13 +429,33 @@ st.write("")
 st.markdown(
     f"""
     **Katharineum zu Lübeck** ·
-    **{len(CLASSES)} YOLO-Kategorien** ·
+    **{len(CLASSES)} Kategorien** ·
     **YOLO11n**
     """
 )
 
-st.divider()amlit-Widgets für Upload/Suche.
-"""
+st.divider()
+
+
+# ============================================================
+# MODELL-FEHLER
+# ============================================================
+
+if model_error:
+
+    st.error(
+        "YOLO11n konnte nicht geladen werden."
+    )
+
+    st.code(
+        model_error
+    )
+
+    st.info(
+        "Überprüfe, ob die Datei "
+        "'yolo11n.pt' direkt neben "
+        "'app.py' in GitHub liegt."
+    )
 
 
 # ============================================================
@@ -415,29 +480,33 @@ with tab1:
         <div class="hero">
             <h2>Lost something? 👀</h2>
             <p>
-            Browse through the found items or report a new item
-            using a photo.
+                Browse through the found items or
+                report a new item using a photo.
             </p>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-    c1, c2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
-    with c1:
+    with col1:
+
         st.metric(
             "Found items",
             len(items)
         )
 
-    with c2:
+    with col2:
+
         st.metric(
             "AI categories",
             len(CLASSES)
         )
 
-    st.subheader("Categories")
+    st.subheader(
+        "Categories"
+    )
 
     cols = st.columns(4)
 
@@ -446,7 +515,8 @@ with tab1:
         count = len([
             item
             for item in items
-            if item.get("category") == category
+            if item.get("category")
+            == category
         ])
 
         with cols[index % 4]:
@@ -464,7 +534,9 @@ with tab1:
                 unsafe_allow_html=True
             )
 
-    st.subheader("Recently found")
+    st.subheader(
+        "Recently found"
+    )
 
     if not items:
 
@@ -474,22 +546,25 @@ with tab1:
 
     else:
 
-        recent = items[:8]
-
         cols = st.columns(4)
 
-        for index, item in enumerate(recent):
+        for index, item in enumerate(
+            items[:8]
+        ):
 
             with cols[index % 4]:
 
-                photo(item)
+                show_photo(item)
 
                 st.markdown(
                     f"**{item.get('name', 'Found item')}**"
                 )
 
                 st.caption(
-                    item.get("category", "")
+                    item.get(
+                        "category",
+                        ""
+                    )
                 )
 
 
@@ -499,12 +574,15 @@ with tab1:
 
 with tab2:
 
-    st.subheader("Search")
+    st.subheader(
+        "Search"
+    )
 
     query = st.text_input(
         "Search",
-        value=st.session_state.get("search", ""),
-        placeholder="e.g. backpack, bottle, laptop..."
+        placeholder=(
+            "e.g. backpack, bottle, laptop..."
+        )
     )
 
     category = st.selectbox(
@@ -522,7 +600,8 @@ with tab2:
         results = [
             item
             for item in results
-            if item.get("category") == category
+            if item.get("category")
+            == category
         ]
 
     st.write(
@@ -539,48 +618,55 @@ with tab2:
 
         for item in results:
 
-            with st.container():
+            col1, col2 = st.columns(
+                [1, 2]
+            )
 
-                col1, col2 = st.columns([1, 2])
+            with col1:
 
-                with col1:
-                    photo(item)
+                show_photo(item)
 
-                with col2:
+            with col2:
 
-                    st.subheader(
-                        f"{emoji_for(item.get('category'))} "
-                        f"{item.get('name', 'Found item')}"
-                    )
+                st.subheader(
+                    f"{emoji_for(item.get('category'))} "
+                    f"{item.get('name', 'Found item')}"
+                )
+
+                st.write(
+                    "Category: "
+                    f"**{item.get('category', '')}**"
+                )
+
+                if item.get(
+                    "description"
+                ):
 
                     st.write(
-                        f"Category: "
-                        f"**{item.get('category', '')}**"
+                        item["description"]
                     )
 
-                    if item.get("description"):
-                        st.write(
-                            item["description"]
-                        )
+                if item.get(
+                    "created_at"
+                ):
 
-                    if item.get("created_at"):
-                        st.caption(
-                            "Found on "
-                            + item["created_at"][:10]
-                        )
+                    st.caption(
+                        "Found on "
+                        + item["created_at"][:10]
+                    )
 
-                    if st.button(
-                        "Collected ✅",
-                        key=f"remove_{item['id']}"
-                    ):
+                if st.button(
+                    "Collected ✅",
+                    key=f"remove_{item['id']}"
+                ):
 
-                        items.remove(item)
+                    items.remove(item)
 
-                        save_items(items)
+                    save_items(items)
 
-                        st.rerun()
+                    st.rerun()
 
-                st.divider()
+            st.divider()
 
 
 # ============================================================
@@ -594,8 +680,8 @@ with tab3:
     )
 
     st.write(
-        "Upload a photo and YOLO11n will try "
-        "to identify the object."
+        "Upload a photo and YOLO11n "
+        "will try to identify the object."
     )
 
     source = st.radio(
@@ -608,7 +694,12 @@ with tab3:
     )
 
     uploader_key = (
-        f"uploader_{st.session_state['uploader_nonce']}"
+        "uploader_"
+        + str(
+            st.session_state[
+                "uploader_nonce"
+            ]
+        )
     )
 
     if source == "Upload image":
@@ -633,11 +724,13 @@ with tab3:
 
     if uploaded is not None:
 
-        st.session_state["rep_bytes"] = (
-            uploaded.getvalue()
-        )
+        st.session_state[
+            "rep_bytes"
+        ] = uploaded.getvalue()
 
-    if not st.session_state.get("rep_bytes"):
+    if not st.session_state.get(
+        "rep_bytes"
+    ):
 
         st.info(
             "Upload or take a photo to start."
@@ -647,7 +740,9 @@ with tab3:
 
         image = Image.open(
             io.BytesIO(
-                st.session_state["rep_bytes"]
+                st.session_state[
+                    "rep_bytes"
+                ]
             )
         ).convert("RGB")
 
@@ -676,16 +771,16 @@ with tab3:
             ):
 
                 with st.spinner(
-                    "YOLO11n is analyzing the image..."
+                    "YOLO11n is analyzing..."
                 ):
 
                     detection = detect_object(
                         image
                     )
 
-                st.session_state["rep_ai"] = (
-                    detection
-                )
+                st.session_state[
+                    "rep_ai"
+                ] = detection
 
                 if detection:
 
@@ -708,7 +803,7 @@ with tab3:
             if ai:
 
                 st.success(
-                    f"Detected: "
+                    "Detected: "
                     f"{emoji_for(ai['label'])} "
                     f"**{ai['label']}**"
                 )
@@ -724,17 +819,19 @@ with tab3:
                 )
 
                 st.caption(
-                    f"Confidence: "
+                    "Confidence: "
                     f"{ai['confidence'] * 100:.1f}%"
                 )
 
                 if ai.get("top3"):
 
                     st.write(
-                        "**Other detections:**"
+                        "**Top detections:**"
                     )
 
-                    for label, probability in ai["top3"]:
+                    for label, probability in ai[
+                        "top3"
+                    ]:
 
                         st.write(
                             f"{emoji_for(label)} "
@@ -745,12 +842,12 @@ with tab3:
             elif ai is not None:
 
                 st.warning(
-                    "YOLO11n could not identify "
-                    "a relevant object in this photo."
+                    "No relevant object "
+                    "was detected."
                 )
 
             st.markdown(
-                '</div>',
+                "</div>",
                 unsafe_allow_html=True
             )
 
@@ -760,13 +857,18 @@ with tab3:
             "Add to the lost & found"
         )
 
-        ai = st.session_state.get(
-            "rep_ai"
-        ) or {}
+        ai = (
+            st.session_state.get(
+                "rep_ai"
+            )
+            or {}
+        )
 
-        default_name = st.session_state.get(
-            "rep_name_ai",
-            ""
+        default_name = (
+            st.session_state.get(
+                "rep_name_ai",
+                ""
+            )
         )
 
         name = st.text_input(
@@ -824,7 +926,8 @@ with tab3:
                 )
 
                 filename = (
-                    item_id + ".jpg"
+                    item_id
+                    + ".jpg"
                 )
 
                 image.save(
@@ -839,7 +942,9 @@ with tab3:
                     "category": category,
                     "description": (
                         description.strip()
-                        or f"Found item: {name.strip()}."
+                        or
+                        f"Found item: "
+                        f"{name.strip()}."
                     ),
                     "search_terms": [
                         name.lower(),
@@ -865,8 +970,9 @@ with tab3:
                     "rep_bytes"
                 ] = None
 
-                st.session_stateamlit-Widgets für Upload/Suche.
-""" = None
+                st.session_state[
+                    "rep_ai"
+                ] = None
 
                 st.session_state[
                     "rep_name_ai"
@@ -877,7 +983,7 @@ with tab3:
                 ] += 1
 
                 st.success(
-                    f"'{name.strip()}' was added "
+                    "The item was added "
                     "to the Fundbox! 🎉"
                 )
 
@@ -894,4 +1000,3 @@ st.caption(
     "Fundbox · Katharineum zu Lübeck · "
     "YOLO11n object detection 🔎"
 )
-```
